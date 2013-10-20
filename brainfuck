@@ -1,0 +1,156 @@
+#!/usr/bin/env python
+
+import sys
+import os
+
+try:
+    import argparse
+except ImportError:
+    print("argparse required but missing, try 'easy_install argparse' or 'pip install argparse'")
+    sys.exit(1)
+
+NON_BRANCH_TOKENS = {'+' : "ADD", \
+    '-' : "SUB", \
+    '>' : "MOVF", \
+    '<' : "MOVB", \
+    ',' : "IN", \
+    '.' : "OUT"}
+BRANCH_TOKENS = {'[' : "JZ", \
+    ']' : "JNZ"}
+
+class Token:
+    def __init__(self, type):
+        self._type = type
+
+    @property
+    def type(self):
+        return self._type
+
+class BranchToken(Token):
+    @property
+    def branch(self):
+        return self._branch
+
+    @branch.setter
+    def branch(self, branch):
+        self._branch = branch
+
+def lex(code):
+    tokens = []
+    for c in code:
+        if c in NON_BRANCH_TOKENS.keys():
+            tokens.append(Token(NON_BRANCH_TOKENS[c]))
+        elif c in BRANCH_TOKENS.keys():
+            tokens.append(BranchToken(BRANCH_TOKENS[c]))        
+    return tokens
+
+def syntax_analysis(tokens):
+    stack = []
+    for i in xrange(len(tokens)):
+        t = tokens[i]
+        if isinstance(t, BranchToken):
+            if t.type is "JZ":
+                stack.append(i)
+            elif t.type is "JNZ":
+                try:
+                    jz_pc = stack.pop()
+                    t.branch = jz_pc
+                    tokens[jz_pc].branch = i
+                except IndexError:
+                    return []
+    return tokens if not stack else []
+
+class EndOfTapeException(Exception):
+    pass
+
+def execute(tokens, tape_size, tape, dp, used):
+    pc = 0
+    while pc < len(tokens):
+        try:
+            if tokens[pc].type is "ADD":                            
+                tape[dp] += 1
+            elif tokens[pc].type is "SUB":
+                tape[dp] -= 1
+            elif tokens[pc].type is "MOVF":
+                dp = (dp + 1) % tape_size
+                used = max(used, dp+1)
+            elif tokens[pc].type is "MOVB":
+                dp = (dp - 1) % tape_size
+                used = max(used, dp+1)
+            elif tokens[pc].type is "JZ":
+                pc = tokens[pc].branch if tape[dp] is 0 else pc
+            elif tokens[pc].type is "JNZ":
+                pc = tokens[pc].branch if tape[dp] is not 0 else pc
+            elif tokens[pc].type is "IN":
+                input = 0
+                accepted = False
+                while not accepted:
+                    try:
+                        input = int(raw_input("=> "))                            
+                        accepted = True
+                    except:
+                        print("invalid input !")
+                        continue
+                tape[dp] = input
+            elif tokens[pc].type is "OUT":
+                try:
+                    sys.stdout.write(chr(tape[dp]))
+                except ValueError:
+                    sys.stdout.write(tape[dp])         
+                finally:
+                    sys.stdout.flush()        
+            pc += 1        
+        except IndexError:
+            raise EndOfTapeException()
+    return tape, dp, used
+
+def display_tape(tape, dp, used):
+    show_tape = []
+    for i in xrange(len(tape[:used])):
+        if i == dp:
+            show_tape.insert(i, '[%s]' % tape[i])
+        else:
+            show_tape.insert(i, str(tape[i]))
+    print('\n' + ' '.join(show_tape))
+
+def repl(tape, tape_size, dp, used):
+    while True:
+        try:
+            code = str(raw_input("brainfuck> "))
+            tape, dp, used = execute(syntax_analysis(lex(code)), tape_size, tape, dp, used)
+            display_tape(tape, dp, used)
+        except (KeyboardInterrupt, EOFError):
+            print("\ngoodbye !")
+            sys.exit()
+
+def main(args):
+    tape = [0] * args.tapesize
+    dp = 0
+    used = 1
+
+    if args.file is None:
+        repl(tape, args.tapesize, dp, used)
+    else:
+        with open(args.file) as code_file:
+            code = code_file.read()
+            print("")
+            execute(syntax_analysis(lex(code)), args.tapesize, tape, dp, used)
+            print("\n")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(prog="brainfuck",
+            description = "Interpreter and REPL for brainfuck")
+
+    def file_extn_check(fname):
+        ext = os.path.splitext(fname)[1][1:]
+        if ext != "bf":
+            parser.error("not a brainfuck (.bf) program")
+        return fname
+
+    parser.add_argument("-f", "--file", 
+        type=lambda s:file_extn_check(s), help="Input brainfuck (.bf) program")
+    parser.add_argument("-ts", "--tapesize", default=128,
+        type=int, help="Size of the tape (128)")
+    args = parser.parse_args()
+
+    main(args)
